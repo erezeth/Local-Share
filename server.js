@@ -8,16 +8,12 @@ const QRCode = require("qrcode");
 const PORT = process.env.PORT || 3000;
 
 const app = express();
-app.use(
-  express.static(path.join(__dirname, "public"), {
-    maxAge: "1h",
-    etag: true,
-  })
-);
+app.use(express.static(path.join(__dirname, "public"), { maxAge: "1h" }));
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server, maxPayload: 32 * 1024 * 1024 });
 
+/* helpers */
 function getLanIp() {
   const nets = os.networkInterfaces();
   for (const name of Object.keys(nets)) {
@@ -28,14 +24,23 @@ function getLanIp() {
   return "127.0.0.1";
 }
 
-const clients = new Map(); // ws -> { id, name }
-let nextId = 1;
-
 const sanitizeName = (s) =>
-  String(s || "")
-    .replace(/[<>&"'`\\]/g, "")
-    .trim()
-    .slice(0, 20);
+  String(s || "").replace(/[<>&"'`\\]/g, "").trim().slice(0, 20);
+
+/* state */
+const clients = new Map();
+let nextAnon = 1;
+
+function nextGuestName() {
+  const used = new Set();
+  for (const c of clients.values()) {
+    const m = /^user-(\d+)$/.exec(c.name);
+    if (m) used.add(parseInt(m[1], 10));
+  }
+  let n = 1;
+  while (used.has(n)) n++;
+  return "user-" + n;
+}
 
 function broadcast(obj, except) {
   const s = JSON.stringify(obj);
@@ -46,18 +51,17 @@ function broadcast(obj, except) {
 
 function broadcastUsers() {
   const users = [];
-  for (const c of clients.values()) users.push({ id: c.id, name: c.name });
+  for (const c of clients.values()) users.push({ name: c.name });
   broadcast({ type: "users", users });
 }
 
+/* ws */
 wss.on("connection", (ws) => {
-  const id = "u" + nextId++;
-  clients.set(ws, { id, name: "anon-" + id });
+  clients.set(ws, { name: "anon-" + nextAnon++ });
   broadcastUsers();
 
   ws.on("message", (data, isBinary) => {
     if (isBinary) {
-      // relay chunk ke client lain
       for (const [client] of clients) {
         if (client !== ws && client.readyState === 1) {
           client.send(data, { binary: true });
@@ -67,17 +71,21 @@ wss.on("connection", (ws) => {
     }
 
     let msg;
-    try {
-      msg = JSON.parse(data.toString());
-    } catch {
-      return;
-    }
+    try { msg = JSON.parse(data.toString()); } catch { return; }
     const me = clients.get(ws);
     if (!me) return;
 
     switch (msg.type) {
       case "ping":
         return;
+
+      case "guest": {
+        me.name = nextGuestName();
+        try { ws.send(JSON.stringify({ type: "guest-name", name: me.name })); } catch {}
+        broadcastUsers();
+        return;
+      }
+
       case "hello":
       case "rename": {
         const name = sanitizeName(msg.name);
@@ -85,17 +93,18 @@ wss.on("connection", (ws) => {
         broadcastUsers();
         return;
       }
+
       case "chat": {
         const text = String(msg.text || "").slice(0, 2000);
         if (!text) return;
         broadcast({ type: "chat", from: me.name, text, ts: Date.now() }, ws);
         return;
       }
+
       case "file-start":
-      case "file-end": {
+      case "file-end":
         broadcast({ ...msg, from: me.name }, ws);
         return;
-      }
     }
   });
 
@@ -105,6 +114,7 @@ wss.on("connection", (ws) => {
   });
 });
 
+/* routes */
 app.get("/qr", async (req, res) => {
   const url = `http://${getLanIp()}:${PORT}`;
   const qr = await QRCode.toDataURL(url, { margin: 1, width: 300 });
@@ -112,6 +122,5 @@ app.get("/qr", async (req, res) => {
 });
 
 server.listen(PORT, () => {
-  const ip = getLanIp();
-  console.log(`\n  Server jalan di  http://${ip}:${PORT}\n`);
+  console.log(`\n  Server jalan di  http://${getLanIp()}:${PORT}\n`);
 });

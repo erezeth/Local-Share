@@ -38,7 +38,7 @@
   }
   button { font: inherit; color: inherit; }
 
-  /* ============ LAYOUT ============ */
+  /* layout */
   #app {
     display: grid;
     height: 100dvh;
@@ -59,7 +59,7 @@
     }
   }
 
-  /* ============ HEADER (mobile) ============ */
+  /* header */
   #header {
     grid-area: header;
     display: grid;
@@ -75,8 +75,6 @@
     box-sizing: border-box;
     overflow: hidden;
   }
-  #header #presence { display: none; }
-
   #header .name-chip {
     min-width: 0;
     overflow: hidden;
@@ -110,8 +108,6 @@
     transition: background .2s;
   }
   #header .name-chip .dot.online { background: #22c55e; }
-
-  /* tombol header mobile: kecil & tetap */
   #header .icon-btn {
     padding: 8px 10px;
     font-size: 14px;
@@ -120,10 +116,9 @@
     width: auto;
     flex: 0 0 auto;
   }
-
   @media (min-width: 768px) { #header { display: none; } }
 
-  /* ============ SIDEBAR (desktop) ============ */
+  /* sidebar */
   #sidebar {
     grid-area: sidebar;
     display: none;
@@ -178,7 +173,7 @@
   .me-bar button:hover { background: var(--border); }
   .side-actions { display: flex; gap: 8px; margin-top: 12px; }
 
-  /* ============ CHAT ============ */
+  /* chat */
   #chat {
     grid-area: chat;
     overflow-y: auto;
@@ -193,7 +188,6 @@
     #chat { padding: 24px 32px; }
     #messages { max-width: 720px; margin: 0 auto; width: 100%; }
   }
-
   .msg {
     max-width: 80%; padding: 8px 12px;
     background: var(--panel); border-radius: var(--radius);
@@ -214,14 +208,13 @@
   }
   .msg a { color: #bfdbfe; word-break: break-all; }
   .msg.me a { color: #fff; }
-
   .status {
     align-self: center; font-size: 12px; color: var(--muted);
     text-align: center; padding: 4px 8px;
     max-width: 100%; overflow-wrap: anywhere;
   }
 
-  /* ============ FOOTER ============ */
+  /* footer */
   #footer {
     grid-area: footer;
     display: flex; gap: 8px; align-items: center;
@@ -248,7 +241,6 @@
     transition: border-color .15s;
   }
   #textInput:focus { outline: none; border-color: var(--accent); }
-
   .icon-btn, .primary-btn {
     flex: 0 0 auto;
     border: 0; border-radius: 10px;
@@ -263,7 +255,6 @@
   .primary-btn:hover { background: var(--accent-hover); }
   .primary-btn:active, .icon-btn:active { transform: scale(.96); }
   #fileInput { display: none; }
-
   #connDot {
     width: 8px; height: 8px; border-radius: 50%;
     background: #ef4444; flex: 0 0 auto;
@@ -271,7 +262,7 @@
   }
   #connDot.online { background: #22c55e; box-shadow: 0 0 0 3px rgba(34,197,94,.18); }
 
-  /* ============ DRAWER (mobile) ============ */
+  /* drawer */
   #drawer {
     position: fixed; inset: 0;
     background: rgba(0,0,0,.6);
@@ -313,7 +304,7 @@
   }
   #drawer .close-btn:hover { background: var(--border); }
 
-  /* ============ OVERLAY ============ */
+  /* overlay */
   .overlay {
     position: fixed; inset: 0;
     background: rgba(0,0,0,.7);
@@ -340,6 +331,33 @@
     -webkit-appearance: none; appearance: none;
   }
   .overlay-card input:focus { outline: none; border-color: var(--accent); }
+  .overlay-card .ghost-btn {
+    padding: 10px 14px;
+    font-size: 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    cursor: pointer;
+    touch-action: manipulation;
+    transition: background .15s, color .15s, border-color .15s;
+  }
+  .overlay-card .ghost-btn:hover:not(:disabled) {
+    background: var(--panel2);
+    color: var(--text);
+    border-color: var(--panel2);
+  }
+  .overlay-card .ghost-btn:disabled { opacity: .6; cursor: wait; }
+  .overlay-card .divider {
+    display: flex; align-items: center; gap: 10px;
+    color: var(--muted); font-size: 11px;
+    text-transform: uppercase; letter-spacing: .8px;
+  }
+  .overlay-card .divider::before,
+  .overlay-card .divider::after {
+    content: '';
+    flex: 1; height: 1px; background: var(--border);
+  }
   #qrModal img {
     width: min(280px, 75vw);
     background: #fff; padding: 8px; border-radius: 10px;
@@ -351,7 +369,7 @@
     text-align: center;
   }
 
-  /* ============ BREAKPOINTS ============ */
+  /* breakpoints */
   @media (min-width: 768px) and (max-width: 1024px) {
     #app { grid-template-columns: 220px minmax(0, 1fr); }
     #sidebar { padding: 16px 12px; }
@@ -416,8 +434,6 @@
   </footer>
 </div>
 
-<span id="presence" hidden></span>
-
 <div id="drawer">
   <div class="panel">
     <h4><span>Online</span><span id="drawerCount">0</span></h4>
@@ -433,6 +449,8 @@
     <input id="nameInput" maxlength="20" placeholder="cth: budi"
            autocomplete="off" autocorrect="off" autocapitalize="off" />
     <button id="nameOk" class="primary-btn">Mulai</button>
+    <div class="divider">atau</div>
+    <button id="guestBtn" class="ghost-btn" type="button">Continue as guest</button>
   </div>
 </div>
 
@@ -448,14 +466,13 @@
 (() => {
   'use strict';
 
-  /* ================= REFS ================= */
+  /* refs */
   const chat          = document.getElementById('chat');
   const messages      = document.getElementById('messages');
   const textInput     = document.getElementById('textInput');
   const sendBtn       = document.getElementById('sendBtn');
   const fileBtn       = document.getElementById('fileBtn');
   const fileInput     = document.getElementById('fileInput');
-  const presence      = document.getElementById('presence');
   const userList      = document.getElementById('userList');
   const userCount     = document.getElementById('userCount');
   const myNameLabel   = document.getElementById('myNameLabel');
@@ -469,37 +486,42 @@
   const nameOverlay   = document.getElementById('nameOverlay');
   const nameInput     = document.getElementById('nameInput');
   const nameOk        = document.getElementById('nameOk');
+  const guestBtn      = document.getElementById('guestBtn');
   const qrModal       = document.getElementById('qrModal');
   const qrImg         = document.getElementById('qrImg');
   const qrUrl         = document.getElementById('qrUrl');
   const connDot       = document.getElementById('connDot');
 
-  /* ================= KONFIG ================= */
+  /* config */
   const MAX_MESSAGES = 200;
   const CHUNK        = 16 * 1024;
   const HIGH_WATER   = 512 * 1024;
   const WARN_SIZE    = 100 * 1024 * 1024;
   const WS_URL       = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  const GUEST_RE     = /^user-\d+$/;
+  const sleep        = ms => new Promise(r => setTimeout(r, ms));
+  const rAF          = cb => requestAnimationFrame(cb);
 
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  const rAF   = cb => requestAnimationFrame(cb);
-
-  /* ================= STORAGE ================= */
+  /* storage */
   const store = {
     get(k) { try { return sessionStorage.getItem(k); } catch { return null; } },
     set(k, v) { try { sessionStorage.setItem(k, v); } catch {} }
   };
 
-  /* ================= STATE ================= */
-  let myName     = store.get('ls_name') || '';
-  let ws         = null;
-  let pingTimer  = null;
+  /* state */
+  let myName = store.get('ls_name') || '';
+  if (GUEST_RE.test(myName)) myName = '';
+
+  let ws           = null;
+  let pingTimer    = null;
   let connWatchdog = null;
+  let guestTimer   = null;
+
   const incoming = new Map();
   const blobUrls = [];
   const outbox   = [];
 
-  /* ================= UTIL ================= */
+  /* util */
   const fmtSize = n => {
     if (n < 1024) return n + ' B';
     if (n < 1048576) return (n/1024).toFixed(1) + ' KB';
@@ -507,7 +529,7 @@
     return (n/1073741824).toFixed(2) + ' GB';
   };
 
-  /* ================= RENDER CHAT ================= */
+  /* render */
   function appendMessage(node) {
     messages.appendChild(node);
     while (messages.children.length > MAX_MESSAGES) {
@@ -587,7 +609,7 @@
     appendMessage(d);
   }
 
-  /* ================= NAMA ================= */
+  /* name */
   function setMyName(name) {
     myName = name;
     if (myNameText)  myNameText.textContent  = name;
@@ -603,21 +625,38 @@
   function submitName() {
     const v = (nameInput.value || '').trim().slice(0, 20);
     myName = v || ('user-' + Math.random().toString(36).slice(2, 6));
-    store.set('ls_name', myName);
+    if (!GUEST_RE.test(myName)) store.set('ls_name', myName);
     setMyName(myName);
     nameOverlay.hidden = true;
     wsSend({ type: 'hello', name: myName });
+  }
+
+  function requestGuest() {
+    guestBtn.disabled = true;
+    guestBtn.textContent = 'Menghubungkan...';
+    clearTimeout(guestTimer);
+    wsSend({ type: 'guest' });
+    guestTimer = setTimeout(() => {
+      guestBtn.disabled = false;
+      guestBtn.textContent = 'Continue as guest';
+    }, 6000);
+  }
+
+  function resetGuestBtn() {
+    clearTimeout(guestTimer);
+    guestBtn.disabled = false;
+    guestBtn.textContent = 'Continue as guest';
   }
 
   nameOk.addEventListener('click', submitName);
   nameInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') { e.preventDefault(); submitName(); }
   });
+  myNameBtn.addEventListener('click', showNamePrompt);
+  document.getElementById('editNameBtn').addEventListener('click', showNamePrompt);
+  guestBtn.addEventListener('click', requestGuest);
 
-  myNameBtn.addEventListener('click', () => showNamePrompt());
-  document.getElementById('editNameBtn').addEventListener('click', () => showNamePrompt());
-
-  /* ================= WS SEND QUEUE ================= */
+  /* queue */
   function wsSend(msg) {
     if (ws && ws.readyState === 1) {
       try {
@@ -637,12 +676,12 @@
   }
 
   function setOnline(on) {
-    if (connDot) connDot.classList.toggle('online', !!on);
-    const chipDot = myNameBtn?.querySelector('.dot');
+    connDot.classList.toggle('online', !!on);
+    const chipDot = myNameBtn.querySelector('.dot');
     if (chipDot) chipDot.classList.toggle('online', !!on);
   }
 
-  /* ================= WS ================= */
+  /* ws */
   function connect() {
     clearTimeout(connWatchdog);
     ws = new WebSocket(WS_URL);
@@ -657,10 +696,10 @@
     ws.addEventListener('open', () => {
       clearTimeout(connWatchdog);
       setOnline(true);
-      if (myName) wsSend({ type: 'hello', name: myName });
+      if (myName && !GUEST_RE.test(myName)) wsSend({ type: 'hello', name: myName });
       flushOutbox();
 
-      if (pingTimer) clearInterval(pingTimer);
+      clearInterval(pingTimer);
       pingTimer = setInterval(() => {
         if (ws.readyState === 1) {
           try { ws.send('{"type":"ping"}'); } catch {}
@@ -679,14 +718,13 @@
 
     ws.addEventListener('close', () => {
       clearTimeout(connWatchdog);
-      if (pingTimer) clearInterval(pingTimer);
+      clearInterval(pingTimer);
       setOnline(false);
-      presence.textContent = 'offline';
       addStatus('🔌 Terputus, sambung ulang...');
       setTimeout(connect, 1200);
     });
 
-    ws.addEventListener('error', () => { setOnline(false); });
+    ws.addEventListener('error', () => setOnline(false));
   }
 
   function handleControl(msg) {
@@ -694,13 +732,23 @@
       case 'users':
         renderUsers(msg.users);
         break;
+
+      case 'guest-name':
+        resetGuestBtn();
+        myName = msg.name;
+        setMyName(myName);
+        nameOverlay.hidden = true;
+        break;
+
       case 'chat':
         addText(msg.from, msg.text, msg.from === myName);
         break;
+
       case 'file-start':
         incoming.set(msg.fileId, { name: msg.name, mime: msg.mime, chunks: [] });
         addStatus(`⬇️ ${msg.from} mengirim ${msg.name} (${fmtSize(msg.size)})`);
         break;
+
       case 'file-end': {
         const f = incoming.get(msg.fileId);
         if (!f) return;
@@ -722,17 +770,15 @@
     f.chunks.push(view.subarray(1 + idLen).slice());
   }
 
-  /* ================= USER LIST ================= */
+  /* users */
   function renderUsers(users) {
-    presence.textContent = users.length + ' online';
-    if (userCount)   userCount.textContent   = users.length;
-    if (drawerCount) drawerCount.textContent = users.length;
+    userCount.textContent   = users.length;
+    drawerCount.textContent = users.length;
 
     const fragA = document.createDocumentFragment();
     const fragB = document.createDocumentFragment();
     for (const u of users) {
       const isMe = u.name === myName;
-
       const li = document.createElement('li');
       if (isMe) li.className = 'me';
       const dot = document.createElement('span');
@@ -741,24 +787,18 @@
       t.textContent = u.name + (isMe ? ' (You)' : '');
       li.append(dot, t);
       fragA.appendChild(li);
-
-      if (drawerUserList) {
-        const li2 = li.cloneNode(true);
-        fragB.appendChild(li2);
-      }
+      fragB.appendChild(li.cloneNode(true));
     }
     userList.replaceChildren(fragA);
-    if (drawerUserList) drawerUserList.replaceChildren(fragB);
+    drawerUserList.replaceChildren(fragB);
   }
 
-  /* ================= KIRIM TEKS ================= */
+  /* text */
   function sendText() {
     const t = textInput.value.trim();
     if (!t) return;
-    if (!wsSend({ type: 'chat', text: t })) {
-      addStatus('📨 Menunggu koneksi...');
-    }
-    addText(myName || 'aku', t, true);
+    if (!wsSend({ type: 'chat', text: t })) addStatus('📨 Menunggu koneksi...');
+    addText(myName, t, true);
     textInput.value = '';
   }
   sendBtn.addEventListener('click', sendText);
@@ -766,7 +806,7 @@
     if (e.key === 'Enter') { e.preventDefault(); sendText(); }
   });
 
-  /* ================= KIRIM FILE ================= */
+  /* file */
   fileBtn.addEventListener('click', () => fileInput.click());
   fileInput.addEventListener('change', async () => {
     const files = fileInput.files;
@@ -803,7 +843,7 @@
       size: file.size
     }));
 
-    const idBytes  = new TextEncoder().encode(fileId);
+    const idBytes   = new TextEncoder().encode(fileId);
     const headerLen = 1 + idBytes.length;
     let offset = 0, idx = 0;
 
@@ -836,7 +876,7 @@
     addFile(myName, file.name, file.type || 'application/octet-stream', file, true);
   }
 
-  /* ================= QR ================= */
+  /* qr */
   async function showQr() {
     try {
       const r = await fetch('/qr');
@@ -855,35 +895,31 @@
     if (e.target === qrModal) qrModal.hidden = true;
   });
 
-  /* ================= DRAWER ================= */
+  /* drawer */
   menuBtn.addEventListener('click', () => drawer.classList.add('open'));
   drawerClose.addEventListener('click', () => drawer.classList.remove('open'));
   drawer.addEventListener('click', e => {
     if (e.target === drawer) drawer.classList.remove('open');
   });
 
-  /* ================= iOS KEYBOARD ================= */
-  if (window.visualViewport) {
-    const vv = window.visualViewport;
-    const fit = () => {
-      document.body.style.height = vv.height + 'px';
-      scrollBottomSoon();
-    };
-    vv.addEventListener('resize', fit);
-    vv.addEventListener('scroll', fit);
-  }
+  /* keyboard */
+  // if (window.visualViewport) {
+  //   const vv = window.visualViewport;
+  //   const fit = () => {
+  //     document.body.style.height = vv.height + 'px';
+  //     scrollBottomSoon();
+  //   };
+  //   vv.addEventListener('resize', fit);
+  //   vv.addEventListener('scroll', fit);
+  // }
 
-  /* ================= BOOTSTRAP ================= */
+  /* boot */
   if (myName) setMyName(myName);
-
   connect();
-
   if (!myName) showNamePrompt();
 
   document.addEventListener('visibilitychange', () => {
-    if (document.visibilityState === 'visible') {
-      if (!ws || ws.readyState > 1) connect();
-    }
+    if (document.visibilityState === 'visible' && (!ws || ws.readyState > 1)) connect();
   });
 })();
 </script>
