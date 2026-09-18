@@ -369,6 +369,21 @@
     text-align: center;
   }
 
+  /* dropzone */
+  #dropzone {
+    position: fixed; inset: 0;
+    z-index: 300;
+    margin: 16px;
+    border: 3px dashed var(--accent);
+    border-radius: 20px;
+    background: rgba(11,18,32,.85);
+    color: var(--text);
+    display: flex; align-items: center; justify-content: center;
+    font-size: 18px; font-weight: 600;
+    pointer-events: none;
+  }
+  #dropzone[hidden] { display: none; }
+
   /* breakpoints */
   @media (min-width: 768px) and (max-width: 1024px) {
     #app { grid-template-columns: 220px minmax(0, 1fr); }
@@ -462,6 +477,8 @@
   </div>
 </div>
 
+<div id="dropzone" hidden>Lepas file di sini</div>
+
 <script>
 (() => {
   'use strict';
@@ -491,6 +508,7 @@
   const qrImg         = document.getElementById('qrImg');
   const qrUrl         = document.getElementById('qrUrl');
   const connDot       = document.getElementById('connDot');
+  const dropzone      = document.getElementById('dropzone');
 
   /* config */
   const MAX_MESSAGES = 200;
@@ -498,7 +516,6 @@
   const HIGH_WATER   = 512 * 1024;
   const WARN_SIZE    = 100 * 1024 * 1024;
   const WS_URL       = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
-  const GUEST_RE     = /^user-\d+$/;
   const sleep        = ms => new Promise(r => setTimeout(r, ms));
   const rAF          = cb => requestAnimationFrame(cb);
 
@@ -509,8 +526,13 @@
   };
 
   /* state */
+  let clientId = store.get('ls_cid');
+  if (!clientId) {
+    clientId = 'c' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
+    store.set('ls_cid', clientId);
+  }
+
   let myName = store.get('ls_name') || '';
-  if (GUEST_RE.test(myName)) myName = '';
 
   let ws           = null;
   let pingTimer    = null;
@@ -623,23 +645,21 @@
   }
 
   function submitName() {
-    const v = (nameInput.value || '').trim().slice(0, 20);
-    myName = v || ('user-' + Math.random().toString(36).slice(2, 6));
-    if (!GUEST_RE.test(myName)) store.set('ls_name', myName);
+    const v = (nameInput.value || '').trim().slice(0, 20)
+      || ('guest-' + Math.random().toString(36).slice(2, 6));
+    myName = v;
+    store.set('ls_name', myName);
     setMyName(myName);
     nameOverlay.hidden = true;
-    wsSend({ type: 'hello', name: myName });
+    wsSend({ type: 'hello', clientId, name: myName });
   }
 
   function requestGuest() {
     guestBtn.disabled = true;
     guestBtn.textContent = 'Menghubungkan...';
     clearTimeout(guestTimer);
-    wsSend({ type: 'guest' });
-    guestTimer = setTimeout(() => {
-      guestBtn.disabled = false;
-      guestBtn.textContent = 'Continue as guest';
-    }, 6000);
+    wsSend({ type: 'guest', clientId });
+    guestTimer = setTimeout(resetGuestBtn, 6000);
   }
 
   function resetGuestBtn() {
@@ -696,7 +716,7 @@
     ws.addEventListener('open', () => {
       clearTimeout(connWatchdog);
       setOnline(true);
-      if (myName && !GUEST_RE.test(myName)) wsSend({ type: 'hello', name: myName });
+      wsSend({ type: 'hello', clientId, name: myName || null });
       flushOutbox();
 
       clearInterval(pingTimer);
@@ -733,11 +753,16 @@
         renderUsers(msg.users);
         break;
 
-      case 'guest-name':
+      case 'welcome':
         resetGuestBtn();
         myName = msg.name;
+        store.set('ls_name', myName);
         setMyName(myName);
         nameOverlay.hidden = true;
+        break;
+
+      case 'need-name':
+        if (nameOverlay.hidden) showNamePrompt();
         break;
 
       case 'chat':
@@ -876,6 +901,33 @@
     addFile(myName, file.name, file.type || 'application/octet-stream', file, true);
   }
 
+  /* drag & drop */
+  document.addEventListener('dragenter', e => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    dropzone.hidden = false;
+  });
+
+  document.addEventListener('dragover', e => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'copy';
+  });
+
+  document.addEventListener('dragleave', e => {
+    if (!e.relatedTarget || !document.contains(e.relatedTarget)) {
+      dropzone.hidden = true;
+    }
+  });
+
+  document.addEventListener('drop', async e => {
+    if (!e.dataTransfer?.types?.includes('Files')) return;
+    e.preventDefault();
+    dropzone.hidden = true;
+    const files = Array.from(e.dataTransfer.files);
+    for (const f of files) await sendFile(f);
+  });
+
   /* qr */
   async function showQr() {
     try {
@@ -915,8 +967,8 @@
 
   /* boot */
   if (myName) setMyName(myName);
-  connect();
   if (!myName) showNamePrompt();
+  connect();
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState === 'visible' && (!ws || ws.readyState > 1)) connect();

@@ -25,16 +25,25 @@ function getLanIp() {
 }
 
 const sanitizeName = (s) =>
-  String(s || "").replace(/[<>&"'`\\]/g, "").trim().slice(0, 20);
+  String(s || "")
+    .replace(/[<>&"'`\\]/g, "")
+    .trim()
+    .slice(0, 20);
+
+const sanitizeId = (s) =>
+  String(s || "")
+    .replace(/[^a-z0-9]/gi, "")
+    .slice(0, 32);
 
 /* state */
-const clients = new Map();
+const clients = new Map(); // ws -> { name }
+const clientNames = new Map(); // clientId -> name
 let nextAnon = 1;
 
 function nextGuestName() {
   const used = new Set();
-  for (const c of clients.values()) {
-    const m = /^user-(\d+)$/.exec(c.name);
+  for (const name of clientNames.values()) {
+    const m = /^user-(\d+)$/.exec(name);
     if (m) used.add(parseInt(m[1], 10));
   }
   let n = 1;
@@ -71,7 +80,11 @@ wss.on("connection", (ws) => {
     }
 
     let msg;
-    try { msg = JSON.parse(data.toString()); } catch { return; }
+    try {
+      msg = JSON.parse(data.toString());
+    } catch {
+      return;
+    }
     const me = clients.get(ws);
     if (!me) return;
 
@@ -79,17 +92,37 @@ wss.on("connection", (ws) => {
       case "ping":
         return;
 
-      case "guest": {
-        me.name = nextGuestName();
-        try { ws.send(JSON.stringify({ type: "guest-name", name: me.name })); } catch {}
+      case "hello": {
+        const cid = sanitizeId(msg.clientId);
+        let name = sanitizeName(msg.name);
+        if (!name && cid) name = clientNames.get(cid);
+
+        if (name) {
+          me.name = name;
+          if (cid) clientNames.set(cid, name);
+          try {
+            ws.send(JSON.stringify({ type: "welcome", name }));
+          } catch {}
+        } else {
+          try {
+            ws.send(JSON.stringify({ type: "need-name" }));
+          } catch {}
+        }
         broadcastUsers();
         return;
       }
 
-      case "hello":
-      case "rename": {
-        const name = sanitizeName(msg.name);
-        if (name) me.name = name;
+      case "guest": {
+        const cid = sanitizeId(msg.clientId);
+        let name = cid ? clientNames.get(cid) : null;
+        if (!name || !/^user-\d+$/.test(name)) {
+          name = nextGuestName();
+          if (cid) clientNames.set(cid, name);
+        }
+        me.name = name;
+        try {
+          ws.send(JSON.stringify({ type: "welcome", name }));
+        } catch {}
         broadcastUsers();
         return;
       }
