@@ -1,6 +1,9 @@
 {
   "name": "lan-share",
   "version": "1.0.0",
+  "description": "Share data (text, photos, videos) between devices on the same local network.",
+  "license": "MIT",
+  "author": "erezium",
   "main": "server.js",
   "scripts": {
     "start": "node server.js"
