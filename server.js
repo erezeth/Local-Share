@@ -1,159 +1,56 @@
-const express = require("express");
-const http = require("http");
-const os = require("os");
-const path = require("path");
-const { WebSocketServer } = require("ws");
-const QRCode = require("qrcode");
+'use strict';
 
-const PORT = process.env.PORT || 3000;
+const { createLocalShareServer } = require('./src/create-server');
+const { buildJoinUrl } = require('./src/utils/network');
 
-const app = express();
-app.use(express.static(path.join(__dirname, "public"), { maxAge: "1h" }));
+async function main() {
+  const app = await createLocalShareServer();
+  const address = await app.listen();
+  const url = buildJoinUrl({ config: app.config, port: address.port });
 
-const server = http.createServer(app);
-const wss = new WebSocketServer({ server, maxPayload: 32 * 1024 * 1024 });
-
-/* helpers */
-function getLanIp() {
-  const nets = os.networkInterfaces();
-  for (const name of Object.keys(nets)) {
-    for (const net of nets[name] || []) {
-      if (net.family === "IPv4" && !net.internal) return net.address;
+  app.logger.info(`Local Share listening at ${url}`);
+  if (app.config.authRequired) {
+    if (app.config.tokenGenerated) {
+      app.logger.info('Generated a new access token for this process');
     }
+    app.logger.info(`Access token: ${app.config.accessToken}`);
+    app.logger.info('Open the URL above, or scan its QR code, to join');
+  } else {
+    app.logger.warn('Authentication is disabled; only use this on a trusted network');
   }
-  return "127.0.0.1";
-}
 
-const sanitizeName = (s) =>
-  String(s || "")
-    .replace(/[<>&"'`\\]/g, "")
-    .trim()
-    .slice(0, 20);
+  let shuttingDown = false;
+  async function shutdown(signal) {
+    if (shuttingDown) return;
+    shuttingDown = true;
+    app.logger.info(`Received ${signal}, shutting down gracefully`);
 
-const sanitizeId = (s) =>
-  String(s || "")
-    .replace(/[^a-z0-9]/gi, "")
-    .slice(0, 32);
+    const forceExit = setTimeout(() => {
+      app.logger.error('Graceful shutdown timed out; forcing exit');
+      process.exit(1);
+    }, 10000);
+    forceExit.unref?.();
 
-/* state */
-const clients = new Map(); // ws -> { name }
-const clientNames = new Map(); // clientId -> name
-let nextAnon = 1;
-
-function nextGuestName() {
-  const used = new Set();
-  for (const name of clientNames.values()) {
-    const m = /^user-(\d+)$/.exec(name);
-    if (m) used.add(parseInt(m[1], 10));
-  }
-  let n = 1;
-  while (used.has(n)) n++;
-  return "user-" + n;
-}
-
-function broadcast(obj, except) {
-  const s = JSON.stringify(obj);
-  for (const [client] of clients) {
-    if (client !== except && client.readyState === 1) client.send(s);
-  }
-}
-
-function broadcastUsers() {
-  const users = [];
-  for (const c of clients.values()) users.push({ name: c.name });
-  broadcast({ type: "users", users });
-}
-
-/* ws */
-wss.on("connection", (ws) => {
-  clients.set(ws, { name: "anon-" + nextAnon++ });
-  broadcastUsers();
-
-  ws.on("message", (data, isBinary) => {
-    if (isBinary) {
-      for (const [client] of clients) {
-        if (client !== ws && client.readyState === 1) {
-          client.send(data, { binary: true });
-        }
-      }
-      return;
-    }
-
-    let msg;
     try {
-      msg = JSON.parse(data.toString());
-    } catch {
-      return;
+      await app.close();
+      clearTimeout(forceExit);
+      process.exit(0);
+    } catch (error) {
+      app.logger.error('Graceful shutdown failed', { error });
+      clearTimeout(forceExit);
+      process.exit(1);
     }
-    const me = clients.get(ws);
-    if (!me) return;
+  }
 
-    switch (msg.type) {
-      case "ping":
-        return;
+  process.once('SIGINT', () => void shutdown('SIGINT'));
+  process.once('SIGTERM', () => void shutdown('SIGTERM'));
+}
 
-      case "hello": {
-        const cid = sanitizeId(msg.clientId);
-        let name = sanitizeName(msg.name);
-        if (!name && cid) name = clientNames.get(cid);
-
-        if (name) {
-          me.name = name;
-          if (cid) clientNames.set(cid, name);
-          try {
-            ws.send(JSON.stringify({ type: "welcome", name }));
-          } catch {}
-        } else {
-          try {
-            ws.send(JSON.stringify({ type: "need-name" }));
-          } catch {}
-        }
-        broadcastUsers();
-        return;
-      }
-
-      case "guest": {
-        const cid = sanitizeId(msg.clientId);
-        let name = cid ? clientNames.get(cid) : null;
-        if (!name || !/^user-\d+$/.test(name)) {
-          name = nextGuestName();
-          if (cid) clientNames.set(cid, name);
-        }
-        me.name = name;
-        try {
-          ws.send(JSON.stringify({ type: "welcome", name }));
-        } catch {}
-        broadcastUsers();
-        return;
-      }
-
-      case "chat": {
-        const text = String(msg.text || "").slice(0, 2000);
-        if (!text) return;
-        broadcast({ type: "chat", from: me.name, text, ts: Date.now() }, ws);
-        return;
-      }
-
-      case "file-start":
-      case "file-end":
-        broadcast({ ...msg, from: me.name }, ws);
-        return;
-    }
-  });
-
-  ws.on("close", () => {
-    clients.delete(ws);
-    broadcastUsers();
-  });
+process.on('unhandledRejection', (reason) => {
+  console.error('[local-share] Unhandled rejection:', reason);
 });
 
-/* routes */
-app.get("/qr", async (req, res) => {
-  const url = `http://${getLanIp()}:${PORT}`;
-  const qr = await QRCode.toDataURL(url, { margin: 1, width: 300 });
-  res.json({ url, qr });
-});
-
-server.listen(PORT, () => {
-  console.log(`\n  Server jalan di  http://${getLanIp()}:${PORT}\n`);
+main().catch((error) => {
+  console.error('[local-share] Failed to start:', error);
+  process.exit(1);
 });
