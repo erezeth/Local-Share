@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/banner.png" alt="Local Share — share text and files between devices on the same LAN" width="100%" />
+</p>
+
 # Local Share
 
 Share text, photos, videos, and files between devices on the same LAN over a WebSocket connection. No database, no cloud, no file storage: content is relayed through the server and kept in memory.
@@ -9,7 +13,9 @@ Share text, photos, videos, and files between devices on the same LAN over a Web
 - Send photos, videos, and other files
 - **Targeted file transfers** with per-recipient delivery; broadcast is still available
 - Transfer progress and connection status in the UI
-- Modern dark/light theme that defaults to the system preference and remembers your choice
+- Fresh green-themed interface with **dark and light modes** that default to the system preference and remember your choice
+- Lightweight front-end: one HTML file plus one script, system fonts, inline SVG icons, and an optimized PNG logo — no frameworks, no build step, no external requests
+- Initial-letter avatars, a CSS-only empty state, and `aria-live` chat announcements
 - Drag & drop files on desktop
 - Temporary nickname — pick your own or continue as guest (`user-1`, `user-2`, ...)
 - Nickname restored after reconnect for the same tab
@@ -34,6 +40,11 @@ server.js ──► src/create-server.js
 ```
 
 `server.js` is intentionally small: it starts the app, prints the join URL/token, and handles `SIGINT`/`SIGTERM`. All relay traffic stays in memory.
+
+### UI assets
+
+- [`assets/banner.png`](assets/banner.png) — README banner
+- [`assets/icon.png`](assets/icon.png) — source artwork for the app logo and favicon; a 128 px optimized copy is served from [`public/icon.png`](public/icon.png) (the server only exposes the `public/` directory)
 
 ### Data flow
 

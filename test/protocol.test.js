@@ -40,7 +40,7 @@ test('chat requires text, caps it, and validates the target', () => {
   assert.deepEqual(message, {
     type: 'chat',
     text: '<b>hello</b>',
-    target: 'peer1',
+    targets: ['peer1'],
   });
 
   assert.throws(
@@ -75,7 +75,8 @@ test('file-start validates fileId, name, MIME and size', () => {
     name: 'photo.png',
     mime: 'image/png',
     size: 10,
-    target: 'peer-1',
+    offset: 0,
+    targets: ['peer-1'],
   });
 
   assert.throws(
@@ -116,6 +117,53 @@ test('file-end and file-cancel require a valid fileId', () => {
   assert.throws(
     () => validateClientMessage({ type: 'file-cancel', fileId: 'x' }, options),
     (error) => error.code === 'INVALID_FILE_ID'
+  );
+});
+
+test('chat and file-start accept multiple deduplicated targets and a resume offset', () => {
+  assert.deepEqual(
+    validateClientMessage(
+      { type: 'chat', text: 'hi', targets: ['peer-1', 'peer-2', 'peer-1'] },
+      options
+    ),
+    { type: 'chat', text: 'hi', targets: ['peer-1', 'peer-2'] }
+  );
+
+  assert.deepEqual(
+    validateClientMessage(
+      {
+        type: 'file-start',
+        fileId: 'file-1234',
+        name: 'a.bin',
+        mime: 'application/octet-stream',
+        size: 10,
+        offset: 4,
+        targets: ['peer-1', 'peer-2'],
+      },
+      options
+    ),
+    {
+      type: 'file-start',
+      fileId: 'file-1234',
+      name: 'a.bin',
+      mime: 'application/octet-stream',
+      size: 10,
+      offset: 4,
+      targets: ['peer-1', 'peer-2'],
+    }
+  );
+
+  assert.throws(
+    () =>
+      validateClientMessage(
+        { type: 'file-start', fileId: 'file-1234', name: 'a', mime: 'text/plain', size: 4, offset: 5 },
+        options
+      ),
+    (error) => error.code === 'INVALID_OFFSET'
+  );
+  assert.throws(
+    () => validateClientMessage({ type: 'chat', text: 'x', targets: 'peer-1' }, options),
+    (error) => error.code === 'INVALID_TARGET'
   );
 });
 

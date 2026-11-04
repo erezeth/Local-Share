@@ -67,6 +67,30 @@ test('transfers reject duplicate IDs, foreign owners and oversized chunks', () =
   );
 });
 
+test('a partial transfer resumes only from its received offset', () => {
+  const transfers = createRegistry();
+  const options = {
+    fileId: 'file-1',
+    ownerId: 'peer-1',
+    targetIds: ['peer-2'],
+    name: 'a.bin',
+    mime: 'application/octet-stream',
+    size: 6,
+  };
+  const transfer = transfers.start(options);
+  transfers.addBytes(transfer, 3);
+
+  assert.equal(transfers.start({ ...options, offset: 3 }), transfer);
+  assert.throws(
+    () => transfers.start({ ...options, offset: 0 }),
+    (error) => error.code === 'RESUME_MISMATCH'
+  );
+  assert.throws(
+    () => transfers.start({ ...options, fileId: 'file-2', offset: 3 }),
+    (error) => error.code === 'RESUME_UNKNOWN'
+  );
+});
+
 test('per-client active transfer limit is enforced', () => {
   const transfers = createRegistry();
   for (let index = 0; index < 2; index += 1) {

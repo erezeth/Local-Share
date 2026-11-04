@@ -20,9 +20,24 @@ class TransferRegistry {
     return this.transfers.size;
   }
 
-  start({ fileId, ownerId, targetIds, name, mime, size }) {
-    if (this.transfers.has(fileId)) {
-      throw new TransferError('DUPLICATE_FILE_ID', 'A transfer with this fileId already exists');
+  start({ fileId, ownerId, targetIds, name, mime, size, offset = 0 }) {
+    const existing = this.transfers.get(fileId);
+    if (existing) {
+      if (existing.ownerId !== ownerId) {
+        throw new TransferError('DUPLICATE_FILE_ID', 'A transfer with this fileId already exists');
+      }
+      if (
+        existing.size !== size ||
+        existing.name !== name ||
+        existing.receivedBytes !== offset
+      ) {
+        throw new TransferError('RESUME_MISMATCH', 'The partial transfer does not match this file');
+      }
+      existing.updatedAt = this.now();
+      return existing;
+    }
+    if (offset !== 0) {
+      throw new TransferError('RESUME_UNKNOWN', 'There is no partial transfer to resume');
     }
 
     let activeForOwner = 0;
@@ -111,18 +126,16 @@ class TransferRegistry {
   }
 
   removeTarget(targetId) {
-    const affected = [];
     const exhausted = [];
     for (const [fileId, transfer] of this.transfers) {
       if (!transfer.targetIds.delete(targetId)) continue;
-      affected.push(transfer);
       // A transfer without recipients can no longer deliver data anywhere.
       if (transfer.targetIds.size === 0) {
         this.transfers.delete(fileId);
         exhausted.push(transfer);
       }
     }
-    return { affected, exhausted };
+    return { exhausted };
   }
 
   sweep(now = this.now()) {

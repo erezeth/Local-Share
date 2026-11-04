@@ -39,11 +39,16 @@
   const connStatus = $('connStatus');
   const connDot = $('connDot');
   const connLabel = $('connLabel');
-  const targetSelect = $('targetSelect');
   const dropzone = $('dropzone');
   const themeBtn = $('themeBtn');
   const themeBtn2 = $('themeBtn2');
   const themeColorMeta = document.querySelector('meta[name="theme-color"]');
+  const recipientBtn = $('recipientBtn');
+  const recipientLabel = $('recipientLabel');
+  const recipientMenu = $('recipientMenu');
+  const recipientList = $('recipientList');
+  const recipientAll = $('recipientAll');
+  const toasts = $('toasts');
 
   /* config */
   const MAX_MESSAGES = 200;
@@ -52,6 +57,7 @@
   const HIGH_WATER = 512 * 1024;
   const DEFAULT_MAX_FILE_SIZE = 100 * 1024 * 1024;
   const WS_URL = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
+  const URL_PATTERN = /https?:\/\/[^\s<>"']+/gi;
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
   let maxFileSize = DEFAULT_MAX_FILE_SIZE;
@@ -81,12 +87,10 @@
   function applyTheme(theme) {
     document.documentElement.dataset.theme = theme;
     if (themeColorMeta) {
-      themeColorMeta.content = theme === 'light' ? '#f3f6fc' : '#080e1a';
+      themeColorMeta.content = theme === 'light' ? '#eff5f1' : '#0a1512';
     }
-
     const nextLabel = theme === 'light' ? 'Aktifkan mode gelap' : 'Aktifkan mode terang';
     for (const button of themeButtons) {
-      button.textContent = theme === 'light' ? '🌙' : '☀️';
       button.title = nextLabel;
       button.setAttribute('aria-label', nextLabel);
     }
@@ -184,12 +188,14 @@
   let lastMessageAt = 0;
   let guestTimer = null;
   let lastUsers = [];
+  let unread = 0;
 
+  const selectedTargets = new Set();
   const incoming = new Map();
+  const outgoing = new Map();
   const blobUrls = new Set();
   const outbox = [];
   const pendingAcks = new Map();
-  const failedTransfers = new Map();
   const transferViews = new Map();
 
   /* util */
@@ -225,6 +231,57 @@
       : 'application/octet-stream';
   }
 
+  function toast(text) {
+    const node = document.createElement('div');
+    node.className = 'toast';
+    node.textContent = text;
+    toasts.appendChild(node);
+    setTimeout(() => node.remove(), 2200);
+  }
+
+  /* notifications */
+  let notifyAsked = false;
+  function maybeAskNotificationPermission() {
+    if (notifyAsked) return;
+    notifyAsked = true;
+    if ('Notification' in window && Notification.permission === 'default') {
+      Notification.requestPermission().catch((error) => {
+        logWarning('Notification permission request failed', error);
+      });
+    }
+  }
+
+  function updateTitle() {
+    const base = myName ? `Local Share — ${myName}` : 'Local Share';
+    document.title = unread ? `(${unread}) ${base}` : base;
+  }
+
+  function notify(from, body) {
+    if (document.visibilityState === 'visible' && document.hasFocus()) return;
+    unread += 1;
+    updateTitle();
+    if ('Notification' in window && Notification.permission === 'granted') {
+      try {
+        const notification = new Notification(from || 'Local Share', {
+          body,
+          tag: 'local-share',
+        });
+        notification.onclick = () => {
+          window.focus();
+          notification.close();
+        };
+      } catch (error) {
+        logWarning('Unable to show a notification', error);
+      }
+    }
+  }
+
+  function resetUnread() {
+    if (!unread) return;
+    unread = 0;
+    updateTitle();
+  }
+
   /* render */
   function appendMessage(node) {
     messages.appendChild(node);
@@ -252,18 +309,66 @@
     });
   }
 
-  function addText(from, text, me, toName) {
+  function renderRichText(container, text) {
+    let lastIndex = 0;
+    for (const match of text.matchAll(URL_PATTERN)) {
+      let url = match[0];
+      const trailing = url.match(/[.,;:!?)\]]+$/);
+      if (trailing) url = url.slice(0, -trailing[0].length);
+      container.appendChild(document.createTextNode(text.slice(lastIndex, match.index)));
+      const link = document.createElement('a');
+      link.href = url;
+      link.target = '_blank';
+      link.rel = 'noopener noreferrer';
+      link.textContent = url;
+      container.appendChild(link);
+      lastIndex = match.index + url.length;
+    }
+    container.appendChild(document.createTextNode(text.slice(lastIndex)));
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+      toast('Tersalin');
+      return;
+    } catch (error) {
+      logWarning('Clipboard API failed; falling back to execCommand', error);
+    }
+    const helper = document.createElement('textarea');
+    helper.value = text;
+    helper.setAttribute('readonly', '');
+    helper.style.position = 'fixed';
+    helper.style.opacity = '0';
+    document.body.appendChild(helper);
+    helper.select();
+    const copied = document.execCommand('copy');
+    helper.remove();
+    toast(copied ? 'Tersalin' : 'Gagal menyalin');
+  }
+
+  function addText(from, text, me, toNames) {
     const wrapper = document.createElement('div');
     wrapper.className = 'msg' + (me ? ' me' : '');
 
     const head = document.createElement('div');
     head.className = 'from';
-    head.textContent = toName ? `${from} → ${toName}` : from;
+    head.textContent = toNames ? `${from} → ${toNames}` : from;
 
     const body = document.createElement('div');
-    body.textContent = text;
+    body.className = 'msg-text';
+    renderRichText(body, text);
 
-    wrapper.append(head, body);
+    const actions = document.createElement('div');
+    actions.className = 'msg-actions';
+    const copy = document.createElement('button');
+    copy.type = 'button';
+    copy.className = 'msg-action';
+    copy.textContent = 'Salin';
+    copy.addEventListener('click', () => void copyText(text));
+    actions.appendChild(copy);
+
+    wrapper.append(head, body, actions);
     appendMessage(wrapper);
   }
 
@@ -339,7 +444,13 @@
     bar.value = 0;
     bar.setAttribute('aria-label', `Progres transfer ${cleanDisplayName(name)}`);
 
-    wrapper.append(label, bar);
+    const retry = document.createElement('button');
+    retry.type = 'button';
+    retry.className = 'retry-btn';
+    retry.textContent = 'Coba lagi';
+    retry.hidden = true;
+
+    wrapper.append(label, bar, retry);
     appendMessage(wrapper);
 
     const prefix =
@@ -353,18 +464,29 @@
       update(received) {
         const safeReceived = Math.max(0, Number(received) || 0);
         const percent = size > 0 ? Math.min(100, Math.round((safeReceived / size) * 100)) : 0;
+        wrapper.classList.remove('error');
+        retry.hidden = true;
         bar.value = percent;
         label.textContent = `${prefix} • ${percent}% (${fmtSize(safeReceived)}/${fmtSize(size)})`;
       },
       complete() {
         bar.value = 100;
         wrapper.classList.add('ok');
+        retry.hidden = true;
         label.textContent = `✅ Selesai: ${prefix.replace(/^(Mengirim|Menerima) /, '')} (${fmtSize(size)})`;
         setTimeout(() => transferViews.delete(key), 30000);
       },
-      fail(reason) {
+      fail(reason, onRetry) {
         wrapper.classList.add('error');
+        wrapper.classList.remove('ok');
         label.textContent = `⚠️ ${prefix} gagal: ${reason || 'dibatalkan'}`;
+        if (onRetry) {
+          retry.hidden = false;
+          retry.onclick = () => {
+            retry.hidden = true;
+            onRetry();
+          };
+        }
         setTimeout(() => transferViews.delete(key), 30000);
       },
     };
@@ -379,7 +501,7 @@
     myName = name;
     if (myNameText) myNameText.textContent = name;
     if (myNameLabel) myNameLabel.textContent = name;
-    document.title = name ? `Local Share — ${name}` : 'Local Share';
+    updateTitle();
   }
 
   function showNamePrompt() {
@@ -477,7 +599,14 @@
   function socketSend(payload) {
     if (!ws || ws.readyState !== 1) return false;
     try {
-      ws.send(typeof payload === 'string' ? payload : JSON.stringify(payload));
+      // Binary chunks must not be JSON-encoded; ArrayBuffer goes straight to ws.send.
+      const data =
+        payload instanceof ArrayBuffer || ArrayBuffer.isView(payload)
+          ? payload
+          : typeof payload === 'string'
+            ? payload
+            : JSON.stringify(payload);
+      ws.send(data);
       return true;
     } catch (error) {
       logWarning('WebSocket send failed', error);
@@ -620,6 +749,10 @@
       }
       incoming.clear();
 
+      for (const record of outgoing.values()) {
+        record.view.fail('Koneksi terputus', () => retryTransfer(record, true));
+      }
+
       if (event.code === 4401) {
         clearStoredToken();
         showAuthOverlay(event.reason || 'Token akses tidak valid.');
@@ -657,7 +790,7 @@
 
   function handleControl(message) {
     if (!isPlainObject(message) || typeof message.type !== 'string') return;
-    if (!authOk && !['auth-ok', 'auth-error', 'auth-required', 'error'].includes(message.type)) {
+    if (!authOk && !['auth-ok', 'auth-error', 'error'].includes(message.type)) {
       return;
     }
 
@@ -684,10 +817,6 @@
         showAuthOverlay(message.message || 'Token akses tidak valid.');
         break;
 
-      case 'auth-required':
-        showAuthOverlay('Server membutuhkan token akses.');
-        break;
-
       case 'welcome':
         if (typeof message.id === 'string') selfId = message.id;
         if (typeof message.name === 'string' && message.name) {
@@ -711,12 +840,9 @@
 
       case 'chat':
         if (typeof message.text === 'string' && message.text) {
-          addText(
-            typeof message.from === 'string' ? cleanName(message.from) : '?',
-            message.text.slice(0, maxChatLength),
-            message.fromId === selfId,
-            null
-          );
+          const from = typeof message.from === 'string' ? cleanName(message.from) : '?';
+          addText(from, message.text.slice(0, maxChatLength), message.fromId === selfId, null);
+          if (message.fromId !== selfId) notify(from, message.text.slice(0, 120));
         }
         break;
 
@@ -732,6 +858,7 @@
           resolveAck(message.fileId, {
             ok: true,
             recipients: Number.isSafeInteger(message.recipients) ? message.recipients : 0,
+            offset: Number.isSafeInteger(message.offset) ? message.offset : 0,
           });
         }
         break;
@@ -763,21 +890,68 @@
     const label = message.message || message.code || 'Terjadi kesalahan';
     addStatus(`⚠️ ${label}`, 'warn');
     if (typeof message.fileId === 'string') {
-      failedTransfers.set(message.fileId, label);
-      resolveAck(message.fileId, { ok: false, message: label });
+      const record = outgoing.get(message.fileId);
+      if (record) {
+        record.failed = { code: message.code, message: label };
+        if (Number.isSafeInteger(message.receivedBytes)) record.offset = message.receivedBytes;
+      }
+      resolveAck(message.fileId, { ok: false, code: message.code, message: label });
     }
   }
 
-  /* users + target */
+  /* users + recipients */
   function createUserItem(user, isMe) {
     const item = document.createElement('li');
     if (isMe) item.className = 'me';
+    const avatar = document.createElement('span');
+    avatar.className = 'avatar';
+    avatar.setAttribute('aria-hidden', 'true');
+    avatar.textContent = [...String(user.name).trim()][0] || '?';
     const dot = document.createElement('span');
     dot.className = 'dot';
+    dot.setAttribute('aria-hidden', 'true');
+    avatar.append(dot);
     const label = document.createElement('span');
-    label.textContent = user.name + (isMe ? ' (You)' : '');
-    item.append(dot, label);
+    label.className = 'user-name';
+    label.textContent = user.name + (isMe ? ' (Anda)' : '');
+    item.append(avatar, label);
     return item;
+  }
+
+  function renderRecipientMenu() {
+    const fragment = document.createDocumentFragment();
+    for (const user of lastUsers) {
+      if (user.id === selfId) continue;
+      const label = document.createElement('label');
+      label.className = 'check';
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.value = user.id;
+      checkbox.checked = selectedTargets.has(user.id);
+      checkbox.addEventListener('change', () => {
+        if (checkbox.checked) selectedTargets.add(user.id);
+        else selectedTargets.delete(user.id);
+        updateRecipientLabel();
+      });
+      const name = document.createElement('span');
+      name.className = 'name';
+      name.textContent = user.name;
+      label.append(checkbox, name);
+      fragment.appendChild(label);
+    }
+    recipientList.replaceChildren(fragment);
+  }
+
+  function updateRecipientLabel() {
+    const count = selectedTargets.size;
+    recipientAll.checked = count === 0;
+    if (count === 0) {
+      recipientLabel.textContent = 'Semua';
+    } else if (count === 1) {
+      recipientLabel.textContent = targetLabel([...selectedTargets][0]);
+    } else {
+      recipientLabel.textContent = `${count} penerima`;
+    }
   }
 
   function renderUsers(users) {
@@ -805,20 +979,12 @@
     userList.replaceChildren(sidebarFragment);
     drawerUserList.replaceChildren(drawerFragment);
 
-    const previousTarget = targetSelect.value;
-    const options = document.createDocumentFragment();
-    options.appendChild(new Option('Semua', ''));
-    for (const user of lastUsers) {
-      if (user.id === selfId) continue;
-      options.appendChild(new Option(user.name, user.id));
+    const onlineIds = new Set(lastUsers.map((user) => user.id));
+    for (const target of selectedTargets) {
+      if (!onlineIds.has(target)) selectedTargets.delete(target);
     }
-    targetSelect.replaceChildren(options);
-
-    if (previousTarget && lastUsers.some((user) => user.id === previousTarget)) {
-      targetSelect.value = previousTarget;
-    } else {
-      targetSelect.value = '';
-    }
+    renderRecipientMenu();
+    updateRecipientLabel();
   }
 
   function targetLabel(targetId) {
@@ -826,30 +992,68 @@
     return target ? target.name : 'penerima';
   }
 
+  function targetNames(targets) {
+    return targets.map((id) => (id === selfId ? 'Anda' : targetLabel(id))).join(', ');
+  }
+
+  recipientBtn.addEventListener('click', () => {
+    const open = recipientMenu.hidden;
+    recipientMenu.hidden = !open;
+    recipientBtn.setAttribute('aria-expanded', String(open));
+    if (open) renderRecipientMenu();
+  });
+
+  recipientAll.addEventListener('change', () => {
+    if (recipientAll.checked) selectedTargets.clear();
+    renderRecipientMenu();
+    updateRecipientLabel();
+  });
+
+  document.addEventListener('click', (event) => {
+    if (recipientMenu.hidden) return;
+    if (recipientBtn.contains(event.target) || recipientMenu.contains(event.target)) return;
+    recipientMenu.hidden = true;
+    recipientBtn.setAttribute('aria-expanded', 'false');
+  });
+
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape' || recipientMenu.hidden) return;
+    recipientMenu.hidden = true;
+    recipientBtn.setAttribute('aria-expanded', 'false');
+  });
+
   /* text */
+  function resizeInput() {
+    textInput.style.height = 'auto';
+    textInput.style.height = Math.min(150, textInput.scrollHeight) + 'px';
+  }
+
   function sendText() {
     const text = textInput.value.trim().slice(0, maxChatLength);
     if (!text) return;
 
-    const targetId = targetSelect.value || null;
+    const targets = [...selectedTargets];
     const queued = wsSend({
       type: 'chat',
       text,
-      ...(targetId ? { target: targetId } : {}),
+      ...(targets.length ? { targets } : {}),
     });
 
-    addText(myName || 'saya', text, true, targetId ? targetLabel(targetId) : null);
+    addText(myName || 'saya', text, true, targets.length ? targetNames(targets) : null);
     if (!queued) addStatus('📨 Menunggu koneksi...', 'warn');
     textInput.value = '';
+    resizeInput();
+    textInput.focus();
   }
 
   sendBtn.addEventListener('click', sendText);
+  textInput.addEventListener('input', resizeInput);
   textInput.addEventListener('keydown', (event) => {
-    if (event.key === 'Enter') {
-      event.preventDefault();
-      sendText();
-    }
+    if (event.key !== 'Enter' || event.shiftKey || event.isComposing) return;
+    event.preventDefault();
+    sendText();
   });
+  document.addEventListener('click', maybeAskNotificationPermission, { once: true });
 
   /* files */
   function makeFileId() {
@@ -888,7 +1092,23 @@
     });
   }
 
-  async function sendFile(file) {
+  function retryTransfer(record, freshStart) {
+    const resume = !freshStart && record.offset > 0 && ws && ws.readyState === 1;
+    const fileId = resume ? record.fileId : makeFileId();
+    const offset = resume ? record.offset : 0;
+    outgoing.delete(record.fileId);
+    void sendFile(record.file, {
+      targets: record.targets,
+      fileId,
+      offset,
+      view: record.view,
+    });
+  }
+
+  async function sendFile(
+    file,
+    { targets = [...selectedTargets], fileId, offset = 0, view = null } = {}
+  ) {
     if (!authOk || !ws || ws.readyState !== 1) {
       addStatus('⚠️ Tunggu koneksi siap dulu...', 'warn');
       return;
@@ -907,55 +1127,70 @@
       return;
     }
 
-    const targetId = targetSelect.value || null;
-    const targetName = targetId ? targetLabel(targetId) : null;
-    const fileId = makeFileId();
-    const view = createTransferView({
-      fileId,
-      direction: 'out',
-      from: myName,
-      name: file.name,
-      size,
-      targetName,
-    });
+    const id = fileId || makeFileId();
+    const record = {
+      file,
+      fileId: id,
+      targets,
+      offset,
+      failed: null,
+      view:
+        view ||
+        createTransferView({
+          fileId: id,
+          direction: 'out',
+          from: myName,
+          name: file.name,
+          size,
+          targetName: targets.length ? targetNames(targets) : null,
+        }),
+    };
+    outgoing.set(id, record);
 
     const startMessage = {
       type: 'file-start',
-      fileId,
+      fileId: id,
       name: file.name || 'file',
       mime: file.type || 'application/octet-stream',
       size,
+      offset,
     };
-    if (targetId) startMessage.target = targetId;
+    if (targets.length) startMessage.targets = targets;
 
     if (!socketSend(startMessage)) {
-      view.fail('Koneksi terputus');
+      record.view.fail('Koneksi terputus', () => retryTransfer(record, true));
       return;
     }
 
-    const ack = await waitForAck(fileId);
+    const ack = await waitForAck(id);
     if (!ack.ok) {
-      failedTransfers.delete(fileId);
-      view.fail(ack.message || 'Ditolak server');
+      if (offset > 0 && ack.code === 'RESUME_UNKNOWN') {
+        retryTransfer(record, true);
+        return;
+      }
+      record.view.fail(ack.message || 'Ditolak server', () => retryTransfer(record, false));
       return;
     }
     if (!ack.recipients) {
-      failedTransfers.delete(fileId);
-      view.fail('Tidak ada penerima online');
+      outgoing.delete(id);
+      record.view.fail('Tidak ada penerima online');
       return;
     }
 
-    const idBytes = new TextEncoder().encode(fileId);
+    let sent = Number.isSafeInteger(ack.offset) ? ack.offset : offset;
+    record.offset = sent;
+    record.failed = null;
+
+    const idBytes = new TextEncoder().encode(id);
     const headerLength = 1 + idBytes.length;
-    let offset = 0;
     let index = 0;
 
     try {
-      while (offset < size) {
+      while (sent < size) {
         if (!ws || ws.readyState !== 1) throw new Error('Koneksi terputus');
-        if (failedTransfers.has(fileId)) throw new Error(failedTransfers.get(fileId));
+        if (record.failed) throw new Error(record.failed.message);
 
-        const buffer = await readBlob(file.slice(offset, offset + CHUNK));
+        const buffer = await readBlob(file.slice(sent, sent + CHUNK));
         if (!buffer || buffer.byteLength === 0) throw new Error('Gagal membaca file');
 
         const packet = new Uint8Array(headerLength + buffer.byteLength);
@@ -969,25 +1204,25 @@
         }
 
         if (!socketSend(packet.buffer)) throw new Error('Gagal mengirim chunk');
-        offset += buffer.byteLength;
+        sent += buffer.byteLength;
+        record.offset = sent;
+        record.view.update(sent);
         index += 1;
-        view.update(offset);
         if (index % 8 === 0) await sleep(0);
       }
 
-      if (!socketSend({ type: 'file-end', fileId })) {
+      if (record.failed) throw new Error(record.failed.message);
+      if (!socketSend({ type: 'file-end', fileId: id })) {
         throw new Error('Koneksi terputus saat menyelesaikan file');
       }
-      const endAck = await waitForAck(fileId);
+      const endAck = await waitForAck(id);
       if (!endAck.ok) throw new Error(endAck.message || 'Server menolak file');
-      view.complete();
+      outgoing.delete(id);
+      record.view.complete();
       addFile(myName || 'saya', file.name, file.type || 'application/octet-stream', file, true);
     } catch (error) {
       logWarning('File transfer failed', error);
-      view.fail(error.message || 'Transfer gagal');
-      if (ws && ws.readyState === 1) socketSend({ type: 'file-cancel', fileId });
-    } finally {
-      failedTransfers.delete(fileId);
+      record.view.fail(error.message || 'Transfer gagal', () => retryTransfer(record, false));
     }
   }
 
@@ -1027,6 +1262,7 @@
       startedAt: Date.now(),
       lastActivityAt: Date.now(),
     });
+    notify(from, `Mengirim file ${name}`);
   }
 
   function handleBinary(buffer) {
@@ -1090,8 +1326,9 @@
   fileInput.addEventListener('change', async () => {
     const files = fileInput.files;
     if (!files || !files.length) return;
+    const targets = [...selectedTargets];
     for (let index = 0; index < files.length; index += 1) {
-      await sendFile(files[index]);
+      await sendFile(files[index], { targets });
     }
     fileInput.value = '';
   });
@@ -1119,8 +1356,10 @@
     if (!event.dataTransfer?.types?.includes('Files')) return;
     event.preventDefault();
     dropzone.hidden = true;
-    const files = Array.from(event.dataTransfer.files);
-    for (const file of files) await sendFile(file);
+    const targets = [...selectedTargets];
+    for (const file of Array.from(event.dataTransfer.files)) {
+      await sendFile(file, { targets });
+    }
   });
 
   /* qr */
@@ -1177,6 +1416,7 @@
   /* boot */
   if (myName) setMyName(myName);
   setOnline('offline');
+  updateRecipientLabel();
 
   async function boot() {
     if (!accessToken) {
@@ -1198,12 +1438,14 @@
 
   document.addEventListener('visibilitychange', () => {
     if (document.visibilityState !== 'visible') return;
+    resetUnread();
     if (authBlocked) return;
     if (!ws || ws.readyState > WebSocket.OPEN) {
       reconnectAttempt = 0;
       connect();
     }
   });
+  window.addEventListener('focus', resetUnread);
 
   void boot();
 })();

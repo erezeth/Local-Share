@@ -246,6 +246,78 @@ test('closing the sender cancels in-flight transfers for recipients', async (t) 
   assert.equal(cancelled.data.reason, 'sender-disconnected');
 });
 
+test('chat and files reach every selected recipient', async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const alice = await authenticatedClient(server.wsUrl, { name: 'Alice' });
+  const bob = await authenticatedClient(server.wsUrl, { name: 'Bob' });
+  const carol = await authenticatedClient(server.wsUrl, { name: 'Carol' });
+  t.after(() => alice.client.close());
+  t.after(() => bob.client.close());
+  t.after(() => carol.client.close());
+
+  alice.client.sendJson({ type: 'chat', text: 'group', targets: [bob.id, carol.id] });
+  assert.equal((await bob.client.waitForType('chat')).data.text, 'group');
+  assert.equal((await carol.client.waitForType('chat')).data.text, 'group');
+
+  const fileId = 'file-multi-1';
+  alice.client.sendJson({
+    type: 'file-start',
+    fileId,
+    name: 'multi.txt',
+    mime: 'text/plain',
+    size: 2,
+    targets: [bob.id, carol.id],
+  });
+  const ack = await alice.client.waitForType('file-start-ack');
+  assert.equal(ack.data.recipients, 2);
+  await bob.client.waitForType('file-start');
+  await carol.client.waitForType('file-start');
+});
+
+test('a completed transfer is delivered when the sender disconnects', async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const alice = await authenticatedClient(server.wsUrl, { name: 'Alice' });
+  const bob = await authenticatedClient(server.wsUrl, { name: 'Bob' });
+  t.after(() => bob.client.close());
+
+  const fileId = 'file-complete-1';
+  const payload = Buffer.from('hello');
+  alice.client.sendJson({
+    type: 'file-start',
+    fileId,
+    name: 'done.txt',
+    mime: 'text/plain',
+    size: payload.length,
+    target: bob.id,
+  });
+  await alice.client.waitForType('file-start-ack');
+  await bob.client.waitForType('file-start');
+  alice.client.sendBinary(binaryChunk(fileId, payload));
+  await bob.client.waitFor((event) => event.binary);
+
+  await alice.client.close();
+  const fileEnd = await bob.client.waitForType('file-end');
+  assert.equal(fileEnd.data.fileId, fileId);
+});
+
+test('unauthenticated sockets never receive the user list', async (t) => {
+  const server = await startTestServer();
+  t.after(() => server.close());
+
+  const anonymous = await WsClient.connect(server.wsUrl);
+  t.after(() => anonymous.close());
+  const alice = await authenticatedClient(server.wsUrl, { name: 'Alice' });
+  t.after(() => alice.client.close());
+
+  await anonymous.expectNoMessage(
+    (event) => !event.binary && event.data && event.data.type === 'users'
+  );
+});
+
 test('AUTH_DISABLED allows clients without a token', async (t) => {
   const server = await startTestServer({ AUTH_DISABLED: 'true', ACCESS_TOKEN: '' });
   t.after(() => server.close());

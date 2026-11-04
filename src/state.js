@@ -94,18 +94,23 @@ class ClientRegistry {
       .map((client) => ({ id: client.id, name: client.name }));
   }
 
-  recipientsFor(targetId, { exceptId = null } = {}) {
-    if (targetId) {
+  recipientsFor(targetIds, { exceptId = null } = {}) {
+    const ids = Array.isArray(targetIds) ? targetIds : targetIds ? [targetIds] : [];
+    if (ids.length === 0) {
+      return [...this.clientsById.values()].filter(
+        (client) => client.id !== exceptId && Boolean(client.name)
+      );
+    }
+
+    const recipients = [];
+    for (const targetId of ids) {
       const target = this.getById(targetId);
       if (!target || !target.name || target.id === exceptId) {
         throw new TargetError(targetId);
       }
-      return [target];
+      recipients.push(target);
     }
-
-    return [...this.clientsById.values()].filter(
-      (client) => client.id !== exceptId && Boolean(client.name)
-    );
+    return recipients;
   }
 
   rememberName(clientId, name) {
@@ -165,13 +170,12 @@ class ClientRegistry {
     }
   }
 
-  broadcast(payload, { exceptId = null, onlyIds = null } = {}) {
+  broadcast(payload, { exceptId = null, authorizedOnly = false } = {}) {
     const raw = JSON.stringify(payload);
-    const allowedIds = onlyIds ? new Set(onlyIds) : null;
     let sent = 0;
     for (const client of this.clientsById.values()) {
       if (client.id === exceptId) continue;
-      if (allowedIds && !allowedIds.has(client.id)) continue;
+      if (authorizedOnly && !client.authorized) continue;
       if (this.sendRaw(client, raw, { binary: false })) sent += 1;
     }
     return sent;

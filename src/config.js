@@ -77,8 +77,9 @@ function loadConfig(env = process.env) {
     maxChatLength: 2000,
     maxFileSize: maxFileSizeMb * 1024 * 1024,
     maxActiveTransfers: readInt(env, 'MAX_ACTIVE_TRANSFERS', 3, { min: 1, max: 50 }),
+    // The browser sends 16 KiB chunks plus a small header, so a lower cap breaks file transfer.
     wsMaxPayload: readInt(env, 'WS_MAX_PAYLOAD_BYTES', 64 * 1024, {
-      min: 2048,
+      min: 32 * 1024,
       max: 32 * 1024 * 1024,
     }),
     wsMaxBufferedBytes: readInt(env, 'WS_MAX_BUFFERED_BYTES', 16 * 1024 * 1024, {

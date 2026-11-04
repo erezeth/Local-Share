@@ -174,11 +174,6 @@ function binaryChunk(fileId, payload) {
   return Buffer.concat([Buffer.from([id.length]), id, Buffer.from(payload)]);
 }
 
-function jsonMessage(event) {
-  if (!event || event.binary) return null;
-  return event.data;
-}
-
 module.exports = {
   TEST_TOKEN,
   silentLogger,
@@ -186,5 +181,4 @@ module.exports = {
   WsClient,
   authenticatedClient,
   binaryChunk,
-  jsonMessage,
 };

@@ -45,7 +45,7 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
   }
 
   function broadcastUsers() {
-    registry.broadcast({ type: 'users', users: registry.listUsers() });
+    registry.broadcast({ type: 'users', users: registry.listUsers() }, { authorizedOnly: true });
   }
 
   function notifyTransferTargets(transfer, payload) {
@@ -53,29 +53,6 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
       const target = registry.getById(targetId);
       if (target) registry.send(target, payload);
     }
-  }
-
-  function abortTransfer(client, transfer, code, message) {
-    try {
-      transfers.cancel(transfer.fileId, client.id);
-    } catch (error) {
-      if (!(error instanceof TransferError) || error.code !== 'UNKNOWN_TRANSFER') {
-        logger.warn('Failed to cancel transfer', { error, fileId: transfer.fileId });
-      }
-    }
-    notifyTransferTargets(transfer, {
-      type: 'file-cancel',
-      fileId: transfer.fileId,
-      from: client.name,
-      fromId: client.id,
-      reason: code.toLowerCase(),
-    });
-    sendError(client, code, message, { fileId: transfer.fileId });
-    logger.warn('Aborted file transfer', {
-      fileId: transfer.fileId,
-      ownerId: client.id,
-      code,
-    });
   }
 
   function closeWithAuthError(ws, client, message, code = CLOSE_CODES.UNAUTHORIZED) {
@@ -247,7 +224,7 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
 
       let recipients;
       try {
-        recipients = registry.recipientsFor(message.target, { exceptId: client.id });
+        recipients = registry.recipientsFor(message.targets, { exceptId: client.id });
       } catch (error) {
         if (error instanceof TargetError) {
           sendError(client, error.code, error.message);
@@ -263,14 +240,14 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
         text: message.text,
         ts: Date.now(),
       };
-      if (message.target) payload.target = message.target;
+      if (message.targets.length) payload.targets = message.targets;
 
       for (const recipient of recipients) {
         registry.send(recipient, payload);
       }
       logger.debug('Chat relayed', {
         fromId: client.id,
-        target: message.target || 'all',
+        targets: message.targets.length ? message.targets : 'all',
         recipients: recipients.length,
       });
     }
@@ -278,7 +255,7 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
     function handleFileStart(message) {
       let recipients;
       try {
-        recipients = registry.recipientsFor(message.target, { exceptId: client.id });
+        recipients = registry.recipientsFor(message.targets, { exceptId: client.id });
       } catch (error) {
         if (error instanceof TargetError) {
           sendError(client, error.code, error.message, { fileId: message.fileId });
@@ -292,7 +269,7 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
           type: 'file-start-ack',
           fileId: message.fileId,
           recipients: 0,
-          target: message.target || null,
+          offset: 0,
         });
         return;
       }
@@ -306,6 +283,7 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
           name: message.name,
           mime: message.mime,
           size: message.size,
+          offset: message.offset,
         });
       } catch (error) {
         if (error instanceof TransferError) {
@@ -315,18 +293,23 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
         throw error;
       }
 
-      const payload = {
-        type: 'file-start',
-        fileId: transfer.fileId,
-        from: client.name,
-        fromId: client.id,
-        name: transfer.name,
-        mime: transfer.mime,
-        size: transfer.size,
-      };
+      // Recipients only need file-start once; a resumed transfer continues with binary chunks.
       let delivered = 0;
-      for (const recipient of recipients) {
-        if (registry.send(recipient, payload)) delivered += 1;
+      if (transfer.receivedBytes === 0) {
+        const payload = {
+          type: 'file-start',
+          fileId: transfer.fileId,
+          from: client.name,
+          fromId: client.id,
+          name: transfer.name,
+          mime: transfer.mime,
+          size: transfer.size,
+        };
+        for (const recipient of recipients) {
+          if (registry.send(recipient, payload)) delivered += 1;
+        }
+      } else {
+        delivered = recipients.length;
       }
 
       if (delivered === 0) {
@@ -335,7 +318,7 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
           type: 'file-start-ack',
           fileId: message.fileId,
           recipients: 0,
-          target: message.target || null,
+          offset: 0,
         });
         return;
       }
@@ -344,12 +327,13 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
         type: 'file-start-ack',
         fileId: message.fileId,
         recipients: delivered,
-        target: message.target || null,
+        offset: transfer.receivedBytes,
       });
       logger.debug('File transfer started', {
         fileId: transfer.fileId,
         ownerId: client.id,
         recipients: delivered,
+        offset: transfer.receivedBytes,
         size: transfer.size,
       });
     }
@@ -362,11 +346,10 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
         if (!(error instanceof TransferError)) throw error;
         if (error.code === 'INCOMPLETE_FILE') {
           const current = transfers.get(message.fileId);
-          if (current) {
-            abortTransfer(client, current, error.code, error.message);
-          } else {
-            sendError(client, error.code, error.message, { fileId: message.fileId });
-          }
+          sendError(client, error.code, error.message, {
+            fileId: message.fileId,
+            receivedBytes: current?.receivedBytes ?? 0,
+          });
           return;
         }
         sendError(client, error.code, error.message, { fileId: message.fileId });
@@ -447,7 +430,10 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
       const chunkBytes = buffer.length - 1 - idLength;
       const rate = client.fileBucket.consume(buffer.length);
       if (!rate.allowed) {
-        abortTransfer(client, transfer, 'RATE_LIMITED', 'File transfer rate limit exceeded');
+        sendError(client, 'RATE_LIMITED', 'File transfer rate limit exceeded', {
+          fileId,
+          receivedBytes: transfer.receivedBytes,
+        });
         return;
       }
 
@@ -455,7 +441,10 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
         transfers.addBytes(transfer, chunkBytes);
       } catch (error) {
         if (error instanceof TransferError) {
-          abortTransfer(client, transfer, error.code, error.message);
+          sendError(client, error.code, error.message, {
+            fileId,
+            receivedBytes: transfer.receivedBytes,
+          });
           return;
         }
         throw error;
@@ -586,6 +575,17 @@ function setupWebSocket({ server, config, logger, registry, transfers }) {
       if (!removed) return;
 
       for (const transfer of transfers.cancelByOwner(client.id)) {
+        // All bytes already arrived, so deliver the file instead of discarding it.
+        if (transfer.receivedBytes === transfer.size) {
+          notifyTransferTargets(transfer, {
+            type: 'file-end',
+            fileId: transfer.fileId,
+            from: client.name,
+            fromId: client.id,
+            size: transfer.size,
+          });
+          continue;
+        }
         notifyTransferTargets(transfer, {
           type: 'file-cancel',
           fileId: transfer.fileId,

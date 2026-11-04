@@ -22,8 +22,8 @@ const ALLOWED_KEYS = Object.freeze({
   hello: new Set(['type', 'clientId', 'name']),
   guest: new Set(['type', 'clientId']),
   ping: new Set(['type']),
-  chat: new Set(['type', 'text', 'target']),
-  'file-start': new Set(['type', 'fileId', 'name', 'mime', 'size', 'target']),
+  chat: new Set(['type', 'text', 'target', 'targets']),
+  'file-start': new Set(['type', 'fileId', 'name', 'mime', 'size', 'target', 'targets', 'offset']),
   'file-end': new Set(['type', 'fileId']),
   'file-cancel': new Set(['type', 'fileId']),
 });
@@ -40,14 +40,31 @@ function assertNoUnknownKeys(raw, allowedKeys) {
   }
 }
 
-function optionalTarget(value) {
-  if (value === undefined || value === null || value === '') return undefined;
-  if (typeof value !== 'string') {
-    throw new ProtocolError('INVALID_TARGET', 'target must be a string');
+function optionalTargets(raw) {
+  const values = [];
+  if (raw.target !== undefined && raw.target !== null && raw.target !== '') {
+    values.push(raw.target);
   }
-  const target = sanitizeId(value, 64);
-  if (!target) throw new ProtocolError('INVALID_TARGET', 'target is invalid');
-  return target;
+  if (raw.targets !== undefined) {
+    if (!Array.isArray(raw.targets)) {
+      throw new ProtocolError('INVALID_TARGET', 'targets must be an array');
+    }
+    if (raw.targets.length > 100) {
+      throw new ProtocolError('INVALID_TARGET', 'targets contains too many recipients');
+    }
+    values.push(...raw.targets);
+  }
+
+  const targets = [];
+  for (const value of values) {
+    if (typeof value !== 'string') {
+      throw new ProtocolError('INVALID_TARGET', 'target must be a string');
+    }
+    const target = sanitizeId(value, 64);
+    if (!target) throw new ProtocolError('INVALID_TARGET', 'target is invalid');
+    if (!targets.includes(target)) targets.push(target);
+  }
+  return targets;
 }
 
 function optionalClientId(value) {
@@ -120,7 +137,7 @@ function validateClientMessage(raw, options = {}) {
       }
       const text = sanitizeText(raw.text, maxChatLength);
       if (!text) throw new ProtocolError('EMPTY_MESSAGE', 'chat text is empty');
-      return { type: 'chat', text, target: optionalTarget(raw.target) };
+      return { type: 'chat', text, targets: optionalTargets(raw) };
     }
 
     case 'file-start': {
@@ -136,13 +153,18 @@ function validateClientMessage(raw, options = {}) {
           `file size must be between 0 and ${maxFileSize} bytes`
         );
       }
+      const offset = raw.offset === undefined ? 0 : raw.offset;
+      if (!Number.isSafeInteger(offset) || offset < 0 || offset > raw.size) {
+        throw new ProtocolError('INVALID_OFFSET', 'offset must be within the declared file size');
+      }
       return {
         type: 'file-start',
         fileId,
         name,
         mime: normalizeMime(raw.mime),
         size: raw.size,
-        target: optionalTarget(raw.target),
+        offset,
+        targets: optionalTargets(raw),
       };
     }
 
@@ -157,4 +179,4 @@ function validateClientMessage(raw, options = {}) {
   }
 }
 
-module.exports = { ProtocolError, validateClientMessage, isPlainObject };
+module.exports = { ProtocolError, validateClientMessage };

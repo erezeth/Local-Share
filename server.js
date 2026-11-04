@@ -1,5 +1,6 @@
 'use strict';
 
+const QRCode = require('qrcode');
 const { createLocalShareServer } = require('./src/create-server');
 const { buildJoinUrl } = require('./src/utils/network');
 
@@ -17,6 +18,15 @@ async function main() {
     app.logger.info('Open the URL above, or scan its QR code, to join');
   } else {
     app.logger.warn('Authentication is disabled; only use this on a trusted network');
+  }
+
+  if (process.stdout.isTTY) {
+    try {
+      const qr = await QRCode.toString(url, { type: 'terminal', small: true });
+      app.logger.info(`Scan to join from another device:\n${qr}`);
+    } catch (error) {
+      app.logger.warn('Unable to render the terminal QR code', { error });
+    }
   }
 
   let shuttingDown = false;
