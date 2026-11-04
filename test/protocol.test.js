@@ -156,7 +156,14 @@ test('chat and file-start accept multiple deduplicated targets and a resume offs
   assert.throws(
     () =>
       validateClientMessage(
-        { type: 'file-start', fileId: 'file-1234', name: 'a', mime: 'text/plain', size: 4, offset: 5 },
+        {
+          type: 'file-start',
+          fileId: 'file-1234',
+          name: 'a',
+          mime: 'text/plain',
+          size: 4,
+          offset: 5,
+        },
         options
       ),
     (error) => error.code === 'INVALID_OFFSET'

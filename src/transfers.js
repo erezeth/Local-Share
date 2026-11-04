@@ -26,11 +26,7 @@ class TransferRegistry {
       if (existing.ownerId !== ownerId) {
         throw new TransferError('DUPLICATE_FILE_ID', 'A transfer with this fileId already exists');
       }
-      if (
-        existing.size !== size ||
-        existing.name !== name ||
-        existing.receivedBytes !== offset
-      ) {
+      if (existing.size !== size || existing.name !== name || existing.receivedBytes !== offset) {
         throw new TransferError('RESUME_MISMATCH', 'The partial transfer does not match this file');
       }
       existing.updatedAt = this.now();
